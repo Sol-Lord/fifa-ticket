@@ -551,43 +551,47 @@ async function simulateBlockchainVerification(transactionId, senderAddress, cryp
 }
 
 // NEW: Send confirmation email (for both card and crypto)
+// NEW: Send confirmation email (Non-blocking)
 app.post('/api/send-confirmation', async (req, res) => {
     try {
         const { customer, tickets, payment, transactionId, total } = req.body;
         
-        console.log('📧 Sending confirmation to:', customer.email);
-        console.log('🎫 Tickets:', tickets.length);
-        console.log('💰 Payment Method:', payment.method);
-        console.log('🔗 Transaction ID:', transactionId);
-        
-        // Generate email content based on payment method
-        const emailHtml = generateTicketEmail(
-            customer, 
-            tickets, 
-            payment, 
-            transactionId, 
-            payment.method
-        );
-        
-        // Send email
-        const emailResult = await sendEmail(
-            customer.email,
-            `🎉 FIFA World Cup 2026 - Ticket Confirmation #${transactionId}`,
-            emailHtml
-        );
-        
+        console.log('📧 Preparing confirmation for:', customer.email);
+
+        // 1. Respond to Frontend IMMEDIATELY. Don't wait for the email.
         res.json({
             success: true,
-            message: 'Confirmation sent successfully',
-            emailSent: emailResult.success
+            message: 'Payment processed successfully. Email is being sent in background.'
         });
         
+        // 2. Send Email in the "Background"
+        // We generate the HTML and send, but we don't hold up the 'res.json' above
+        try {
+            const emailHtml = generateTicketEmail(
+                customer, 
+                tickets, 
+                payment, 
+                transactionId, 
+                payment.method
+            );
+            
+            await sendEmail(
+                customer.email,
+                `🎉 FIFA World Cup 2026 - Ticket Confirmation #${transactionId}`,
+                emailHtml
+            );
+            console.log('✅ Email sent successfully in background');
+        } catch (emailError) {
+            // If email fails, we just log it. The user already got their "Success" screen.
+            console.error('⚠️ Background Email Failed:', emailError.message);
+        }
+        
     } catch (error) {
-        console.error('❌ Error sending confirmation:', error);
-        res.json({
-            success: false,
-            message: error.message
-        });
+        console.error('❌ Error in confirmation endpoint:', error);
+        // Even if this crashes, we try not to break the experience if possible
+        if (!res.headersSent) {
+            res.json({ success: false, message: error.message });
+        }
     }
 });
 
@@ -927,3 +931,4 @@ app.listen(PORT, () => {
     `);
 
 });
+
