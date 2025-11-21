@@ -7,12 +7,18 @@ require('dotenv').config();
 const nodemailer = require('nodemailer');
 
 // Email transporter configuration - UPDATED FOR RENDER
-// Using 'service: gmail' handles ports automatically and prevents timeouts
+// We use Port 465 (SSL) which is less likely to be blocked by cloud firewalls
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // use SSL
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
+    },
+    tls: {
+        // Do not fail on invalid certs (helpful for cloud networks)
+        rejectUnauthorized: false
     }
 });
 
@@ -423,3 +429,4 @@ async function sendEmail(to, subject, html) {
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
