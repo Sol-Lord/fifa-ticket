@@ -2,9 +2,10 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const Stripe = require('stripe');
-const axios = require('axios'); // We use this instead of Nodemailer
+// DELETED: const axios = require('axios'); <-- This line was causing the crash
 require('dotenv').config();
 
+// Initialize Stripe
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
@@ -51,7 +52,7 @@ app.post('/api/process-payment', async (req, res) => {
     }
 });
 
-// 4. EMAIL SENDING (VIA NATIVE FETCH - NO AXIOS NEEDED)
+// 4. EMAIL SENDING (Using Native Fetch - NO INSTALLATION REQUIRED)
 app.post('/api/send-email', async (req, res) => {
     const { to_name, to_email, transaction_id, total_amount, match_details } = req.body;
 
@@ -70,7 +71,7 @@ app.post('/api/send-email', async (req, res) => {
     };
 
     try {
-        // Using built-in fetch (Node 18+)
+        // This uses Node.js built-in fetch. It does not need 'axios' or 'nodemailer'.
         const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
             method: 'POST',
             headers: {
@@ -80,18 +81,16 @@ app.post('/api/send-email', async (req, res) => {
         });
 
         if (response.ok) {
-            console.log('✅ Email sent successfully via Fetch');
+            console.log('✅ Email sent successfully');
             res.json({ success: true });
         } else {
             const errorText = await response.text();
-            throw new Error(errorText);
+            console.error('❌ EmailJS Error:', errorText);
+            res.status(500).json({ success: false, message: errorText });
         }
     } catch (error) {
-        console.error('❌ Email API Error:', error.message);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Failed to connect to EmailJS API' 
-        });
+        console.error('❌ Server Connection Error:', error.message);
+        res.status(500).json({ success: false, message: error.message });
     }
 });
 
@@ -101,4 +100,3 @@ app.post('/api/verify-crypto', async (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
