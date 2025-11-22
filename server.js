@@ -51,19 +51,18 @@ app.post('/api/process-payment', async (req, res) => {
     }
 });
 
-// 4. EMAIL SENDING (VIA HTTP API - BYPASSES RENDER BLOCK)
+// 4. EMAIL SENDING (VIA NATIVE FETCH - NO AXIOS NEEDED)
 app.post('/api/send-email', async (req, res) => {
     const { to_name, to_email, transaction_id, total_amount, match_details } = req.body;
 
-    // We prepare the data exactly how EmailJS API expects it
     const emailData = {
         service_id: process.env.EMAILJS_SERVICE_ID,
         template_id: process.env.EMAILJS_TEMPLATE_ID,
         user_id: process.env.EMAILJS_PUBLIC_KEY,
-        accessToken: process.env.EMAILJS_PRIVATE_KEY, // Required for server-side requests
+        accessToken: process.env.EMAILJS_PRIVATE_KEY,
         template_params: {
             to_name: to_name,
-            to_email: to_email, // This must match the variable in your EmailJS template
+            to_email: to_email,
             transaction_id: transaction_id,
             total_amount: total_amount,
             match_details: match_details
@@ -71,17 +70,27 @@ app.post('/api/send-email', async (req, res) => {
     };
 
     try {
-        // sending a POST request to port 443 (Standard HTTPS)
-        // Render allows this.
-        await axios.post('https://api.emailjs.com/api/v1.0/email/send', emailData);
-        
-        console.log('✅ Email sent successfully via API');
-        res.json({ success: true });
+        // Using built-in fetch (Node 18+)
+        const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(emailData)
+        });
+
+        if (response.ok) {
+            console.log('✅ Email sent successfully via Fetch');
+            res.json({ success: true });
+        } else {
+            const errorText = await response.text();
+            throw new Error(errorText);
+        }
     } catch (error) {
-        console.error('❌ Email API Error:', error.response ? error.response.data : error.message);
+        console.error('❌ Email API Error:', error.message);
         res.status(500).json({ 
             success: false, 
-            message: error.response?.data || 'Failed to connect to EmailJS API' 
+            message: 'Failed to connect to EmailJS API' 
         });
     }
 });
@@ -92,3 +101,4 @@ app.post('/api/verify-crypto', async (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
